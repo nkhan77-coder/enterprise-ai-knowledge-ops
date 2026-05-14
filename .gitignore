@@ -52,6 +52,11 @@ appsettings.Local.json
 Thumbs.db
 desktop.ini
 
+# SQLite (local dev DB)
+*.db
+*.db-shm
+*.db-wal
+
 # Test output
 TestResults/
 coverage/

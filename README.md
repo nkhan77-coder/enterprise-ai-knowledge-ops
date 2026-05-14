@@ -1,6 +1,6 @@
 # enterprise-ai-knowledge-ops
 
-> **Status: Phase 0 of 12 complete.** Active work in progress. Repo scaffolding + design docs are in place; production code starts in Phase 1. See the [Roadmap](#roadmap) and [Current Limitations](#current-limitations).
+> **Status: Phase 1 of 12 complete.** Active work in progress. Document upload endpoint is live with blob persistence, metadata tracking, correlation logging, and Swagger. See the [Roadmap](#roadmap), [Run it locally](#run-it-locally), and [Current Limitations](#current-limitations).
 
 Enterprise AI knowledge operations platform using **Azure OpenAI**, **Azure AI Search**, **RAG**, **agentic workflows**, **tool-calling agents**, **Durable Functions**, and **enterprise observability** patterns.
 
@@ -98,8 +98,8 @@ Built in strict order — no jumping ahead. Each phase has explicit "done when" 
 | # | Phase | Status | Done when |
 |---|---|---|---|
 | 0 | Repo scaffolding + design docs | ✅ Complete | Folder structure, 5 design docs, 4 ADRs |
-| 1 | Upload PDF, store metadata | ⏳ Next | 5 PDFs uploaded, DB row per file, errors logged |
-| 2 | Async processing via Service Bus | ⬜ | API returns fast; worker independent; failures preserved |
+| 1 | Upload PDF, store metadata | ✅ Complete | 5 PDFs uploaded to Azurite, SQLite row per file, correlation IDs logged, Swagger live, 5 tests pass |
+| 2 | Async processing via Service Bus | ⏳ Next | API returns fast; worker independent; failures preserved |
 | 3 | Extract text + chunk | ⬜ | Bad vs good chunk results documented; overlap rationale clear |
 | 4 | Embeddings + Azure AI Search | ⬜ | Hybrid beats keyword-only and vector-only on eval set |
 | 5 | RAG with citations | ⬜ | 20-question eval set passes; weak-retrieval returns "not enough info" |
@@ -120,6 +120,79 @@ Honest detail on what's missing right now: [docs/limitations.md](docs/limitation
 This is Phase 0. Right now the repo contains **design documents and folder scaffolding only** — no compiled code, no running services, no live demo URL. That is by design: the project rebuilds each capability from first principles rather than dropping a finished system. See [docs/limitations.md](docs/limitations.md) for the full honest list of gaps and TODOs.
 
 Screenshots of running systems (Application Insights traces, AI Search index, evaluation results, agent traces) will be added to this README as each phase produces something real to capture. They are not faked or borrowed.
+
+---
+
+## Run it locally
+
+**Requirements**
+- .NET 8 SDK
+- Azurite (`npm install -g azurite`) — local Azure Blob Storage emulator
+- (No database install needed — Phase 1 uses SQLite via EF Core. Production will use Azure SQL; see [ADR-0003](docs/adr/0003-metadata-store-sql-vs-cosmos.md).)
+
+**Start Azurite**
+
+```powershell
+mkdir -Force $env:TEMP\azurite | Out-Null
+azurite --silent --location $env:TEMP\azurite
+```
+
+**Run the API**
+
+```powershell
+cd src\KnowledgeOps.Api
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:ASPNETCORE_URLS = "http://localhost:5099"
+dotnet run --no-launch-profile
+```
+
+The API listens on http://localhost:5099. Swagger UI: http://localhost:5099/swagger.
+
+**Upload a PDF**
+
+```bash
+curl -i -X POST http://localhost:5099/api/documents/upload \
+  -H "X-Uploaded-By: noman@example.com" \
+  -F "file=@./your-document.pdf;type=application/pdf"
+```
+
+Response:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+X-Correlation-ID: 27c14f3ba777407da8444fcb16aa1fdf
+
+{"documentId":"9efa71b1-ee5f-4227-97b0-4dba915fe6ce"}
+```
+
+The endpoint also accepts an inbound `X-Correlation-ID` header and echoes it back; if absent, one is generated. The correlation ID is attached to the logger scope for every log line in the request.
+
+**Validation responses**
+
+| Case | Status |
+|---|---|
+| Empty or missing `file` field | `400 Bad Request` |
+| Content-Type other than `application/pdf` | `415 Unsupported Media Type` |
+| File larger than 25 MB | `413 Payload Too Large` |
+
+**Verify side effects**
+
+```powershell
+# 1. Document row in SQLite
+sqlite3 .\src\KnowledgeOps.Api\knowledgeops.db "SELECT Id, FileName, Status FROM Documents"
+
+# 2. Blob in Azurite (use Azure Storage Explorer or:)
+curl http://127.0.0.1:10000/devstoreaccount1/raw-documents?restype=container&comp=list
+```
+
+**Run the tests**
+
+```powershell
+dotnet test KnowledgeOps.sln
+```
+
+Five integration tests cover validation (400/415), success path (blob + metadata + 200), correlation ID echo, and `X-Uploaded-By` capture. Tests use EF InMemory + a stub `IBlobUploader` — no Azurite required for the test suite.
 
 ---
 
